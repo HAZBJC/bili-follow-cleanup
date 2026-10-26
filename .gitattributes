@@ -1,0 +1,7 @@
+# 统一换行符，避免 Windows 提交把 LF 改成 CRLF 导致 diff 噪音
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.zip binary
