@@ -1,19 +1,19 @@
 // ==UserScript==
 // @name         B站关注清理助手
 // @name:en      Bilibili Follow Cleanup
-// @namespace    https://github.com/YOUR_GITHUB_NAME/bili-follow-cleanup
+// @namespace    https://github.com/HAZBJC/bili-follow-cleanup
 // @version      1.1.0
 // @description  扫描关注列表，标出「一年未更新」和「已注销」的 UP 主，导出 CSV；确认后再分批取关。默认只读。
 // @description:en  Scan your Bilibili following list, flag creators with no uploads for a year and deactivated accounts, export a CSV, then unfollow in controlled batches.
-// @author       YOUR_GITHUB_NAME
+// @author       HAZBJC
 // @match        https://space.bilibili.com/*
 // @match        https://www.bilibili.com/*
 // @grant        none
 // @run-at       document-idle
-// @homepageURL  https://github.com/YOUR_GITHUB_NAME/bili-follow-cleanup
-// @supportURL   https://github.com/YOUR_GITHUB_NAME/bili-follow-cleanup/issues
-// @updateURL    https://raw.githubusercontent.com/YOUR_GITHUB_NAME/bili-follow-cleanup/main/bili-follow-cleanup.user.js
-// @downloadURL  https://raw.githubusercontent.com/YOUR_GITHUB_NAME/bili-follow-cleanup/main/bili-follow-cleanup.user.js
+// @homepageURL  https://github.com/HAZBJC/bili-follow-cleanup
+// @supportURL   https://github.com/HAZBJC/bili-follow-cleanup/issues
+// @updateURL    https://raw.githubusercontent.com/HAZBJC/bili-follow-cleanup/main/bili-follow-cleanup.user.js
+// @downloadURL  https://raw.githubusercontent.com/HAZBJC/bili-follow-cleanup/main/bili-follow-cleanup.user.js
 // @license      MIT
 // ==/UserScript==
 

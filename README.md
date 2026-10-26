@@ -30,7 +30,7 @@ B 站关注上限是 5000 个。用得久了，列表里会堆满早就停更的
 2. 点下面的链接安装脚本：
 
    ```
-   https://raw.githubusercontent.com/YOUR_GITHUB_NAME/bili-follow-cleanup/main/bili-follow-cleanup.user.js
+   https://raw.githubusercontent.com/HAZBJC/bili-follow-cleanup/main/bili-follow-cleanup.user.js
    ```
 
    Tampermonkey 会自动弹出安装页；或者把 `.user.js` 文件直接拖进浏览器窗口。
