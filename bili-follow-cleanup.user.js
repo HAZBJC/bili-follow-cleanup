@@ -2,7 +2,7 @@
 // @name         B站关注清理助手
 // @name:en      Bilibili Follow Cleanup
 // @namespace    https://github.com/HAZBJC/bili-follow-cleanup
-// @version      1.3.2
+// @version      1.4.0
 // @description  扫描关注列表，标出「一年未更新」和「已注销」的 UP 主，导出 CSV；确认后再分批取关。默认只读。
 // @description:en  Scan your Bilibili following list, flag creators with no uploads for a year and deactivated accounts, export a CSV, then unfollow in controlled batches.
 // @author       HAZBJC
@@ -173,6 +173,7 @@
     unfollow: { date: '', count: 0 },
     note: '',
     force: false,   // 重新扫描：忽略已有结果，全部重查
+    whitelist: [],  // 白名单 mid，永不处理
   };
 
   function save() {
@@ -180,6 +181,7 @@
       localStorage.setItem(KEY, JSON.stringify({
         mid: S.mid, total: S.total, totalPages: S.totalPages, cursorPage: S.cursorPage,
         queue: S.queue, results: S.results, unfollow: S.unfollow, force: S.force,
+        whitelist: S.whitelist,
       }));
     } catch (e) { /* 容量问题忽略 */ }
   }
@@ -223,7 +225,18 @@
   // ============ 判定 ============
   const isDead = (r) => r.status === 'deleted';
   const isStale = (r) => r.status === 'ok' && r.lastTs && Date.now() - r.lastTs * 1000 > CFG.yearMs;
-  const isTarget = (r) => (isDead(r) || isStale(r)) && !r.unfollowed;
+  const isWhite = (r) => S.whitelist.indexOf(String(r.mid)) >= 0;
+  const isTarget = (r) => (isDead(r) || isStale(r)) && !r.unfollowed && !r.mutual && !isWhite(r);
+
+  // 统一判定文案，面板和 CSV 共用，避免两处逻辑不一致
+  function verdict(r) {
+    if (r.unfollowed) return '已取关';
+    if (isWhite(r)) return '白名单';
+    if (r.mutual) return '保留(互关)';
+    if (isDead(r)) return '待取关(注销)';
+    if (isStale(r)) return '待取关(一年未更)';
+    return '保留';
+  }
 
   // ============ 扫描 ============
   async function fetchFollowPage(pn) {
@@ -236,18 +249,23 @@
     return list;
   }
 
-  async function checkUser(mid, uname) {
+  async function checkUser(mid, uname, mutual) {
+    const base = { mid, uname, mutual: !!mutual };
     const j = await getSigned('/x/space/wbi/arc/search', { mid, ps: 1, pn: 1, order: 'pubdate' });
-    if (j.code === -404) return { mid, uname, status: 'deleted', lastTs: 0 };
-    if (j.code !== 0) return { mid, uname, status: 'error', lastTs: 0, note: 'code=' + j.code };
+    if (j.code === -404) return Object.assign(base, { status: 'deleted', lastTs: 0 });
+    if (j.code !== 0) return Object.assign(base, { status: 'error', lastTs: 0, note: 'code=' + j.code });
     const vlist = (j.data && j.data.list && j.data.list.vlist) || [];
     // 注销账号往往仍返回旧视频列表，只能靠昵称兜底
     if (/账号已注销/.test(uname || '')) {
-      return { mid, uname, status: 'deleted', lastTs: vlist.length ? (vlist[0].created || vlist[0].pubdate || 0) : 0, note: '名称显示已注销' };
+      return Object.assign(base, {
+        status: 'deleted',
+        lastTs: vlist.length ? (vlist[0].created || vlist[0].pubdate || 0) : 0,
+        note: '名称显示已注销',
+      });
     }
-    if (!vlist.length) return { mid, uname, status: 'novideo', lastTs: 0 };
+    if (!vlist.length) return Object.assign(base, { status: 'novideo', lastTs: 0 });
     const v = vlist[0];
-    return { mid, uname, status: 'ok', lastTs: v.created || v.pubdate || 0, title: v.title || '' };
+    return Object.assign(base, { status: 'ok', lastTs: v.created || v.pubdate || 0, title: v.title || '' });
   }
 
   async function scanLoop() {
@@ -263,7 +281,8 @@
           const list = await fetchFollowPage(S.cursorPage);
           if (!list.length) break;
           S.totalPages = Math.ceil(S.total / CFG.pageSize);
-          S.queue = list.filter((u) => S.force || !S.results[u.mid]).map((u) => ({ mid: u.mid, uname: u.uname }));
+          S.queue = list.filter((u) => S.force || !S.results[u.mid])
+            .map((u) => ({ mid: u.mid, uname: u.uname, mutual: u.attribute === 6 }));
           S.cursorPage++;
           save();
           setNote(`已取到第 ${S.cursorPage - 1}/${S.totalPages} 页`);
@@ -275,7 +294,7 @@
 
         let rec;
         try {
-          rec = await checkUser(item.mid, item.uname);
+          rec = await checkUser(item.mid, item.uname, item.mutual);
         } catch (e) {
           if (e instanceof RiskError) {
             S.paused = true;
@@ -284,7 +303,7 @@
             await sleep(CFG.riskCooldown);
             continue;
           }
-          rec = { mid: item.mid, uname: item.uname, status: 'error', lastTs: 0, note: String(e.message || e).slice(0, 80) };
+          rec = { mid: item.mid, uname: item.uname, mutual: !!item.mutual, status: 'error', lastTs: 0, note: String(e.message || e).slice(0, 80) };
         }
 
         S.results[item.mid] = rec;
@@ -374,7 +393,15 @@
       while (!S.stopped) {
         const list = await fetchFollowPage(pn);
         if (!list.length) break;
-        list.forEach((u) => mids.add(String(u.mid)));
+        // 顺便刷新互关状态与昵称，这样老缓存不用重扫也能拿到互关标记
+        list.forEach((u) => {
+          mids.add(String(u.mid));
+          const rec = S.results[u.mid];
+          if (rec) {
+            rec.mutual = u.attribute === 6;
+            if (u.uname) rec.uname = u.uname;
+          }
+        });
         setNote(`对账中：已拉取 ${mids.size}/${S.total || '?'} 个关注`);
         render();
         const maxPage = Math.ceil((S.total || 0) / CFG.pageSize);
@@ -405,15 +432,16 @@
 
   // ============ 导出 ============
   function exportCsv() {
-    const rows = [['UP主', 'UID', '空间链接', '最后投稿', '距今天数', '状态', '判定']];
+    const rows = [['UP主', 'UID', '空间链接', '最后投稿', '距今天数', '互关', '状态', '判定']];
     Object.values(S.results).forEach((r) => {
       rows.push([
         r.uname || '', r.mid,
         'https://space.bilibili.com/' + r.mid,
         fmtDate(r.lastTs),
         daysAgo(r.lastTs) === null ? '' : daysAgo(r.lastTs),
+        r.mutual ? '是' : '',
         r.status === 'deleted' ? '已注销' : r.status === 'novideo' ? '无视频投稿' : r.status === 'error' ? '查询异常:' + (r.note || '') : '正常',
-        r.unfollowed ? '已取关' : isDead(r) ? '待取关(注销)' : isStale(r) ? '待取关(一年未更)' : '保留',
+        verdict(r),
       ]);
     });
     const csv = '\ufeff' + rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\r\n');
@@ -430,7 +458,7 @@
     const data = {
       v: 1, exportedAt: today(),
       mid: S.mid, total: S.total, totalPages: S.totalPages, cursorPage: S.cursorPage,
-      queue: S.queue, results: S.results, unfollow: S.unfollow,
+      queue: S.queue, results: S.results, unfollow: S.unfollow, whitelist: S.whitelist,
     };
     const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
     const a = document.createElement('a');
@@ -458,6 +486,7 @@
           S.cursorPage = o.cursorPage || 1;
           S.queue = Array.isArray(o.queue) ? o.queue : [];
           S.results = o.results;
+          if (Array.isArray(o.whitelist)) S.whitelist = o.whitelist;
           // 同一天换机时把当日额度一并带过来，避免重复超额
           if (o.unfollow && o.unfollow.date === today()) S.unfollow = o.unfollow;
           normalizeResults();
@@ -471,6 +500,46 @@
       fr.readAsText(f, 'utf-8');
     };
     inp.click();
+  }
+
+  // ============ 白名单 ============
+  // 白名单里的账号永远不会进入待取关列表，适合「停更了但想留着」的 UP 主。
+  function manageWhitelist() {
+    const input = prompt(
+      '白名单：这些账号不会被判定为待取关。\n' +
+      `当前 ${S.whitelist.length} 个。\n\n` +
+      '输入 UID 添加（逗号/空格/换行分隔）；\n' +
+      '在 UID 前加减号可移除，如 -12345；\n' +
+      '输入 clear 清空；直接取消则不修改。',
+      ''
+    );
+    if (input === null) return;
+    const t = input.trim();
+    if (!t) return;
+
+    if (t.toLowerCase() === 'clear') {
+      if (!confirm('确定清空白名单？')) return;
+      S.whitelist = [];
+      save(); render();
+      setNote('白名单已清空。');
+      return;
+    }
+
+    let added = 0, removed = 0;
+    t.split(/[\s,，;；]+/).forEach((tok) => {
+      const neg = tok.charAt(0) === '-';
+      const id = neg ? tok.slice(1) : tok;
+      if (!/^\d{3,}$/.test(id)) return;
+      const i = S.whitelist.indexOf(id);
+      if (neg) {
+        if (i >= 0) { S.whitelist.splice(i, 1); removed++; }
+      } else if (i < 0) {
+        S.whitelist.push(id); added++;
+      }
+    });
+    if (!added && !removed) { alert('没识别到有效的 UID（应为纯数字）。'); return; }
+    save(); render();
+    setNote(`白名单：新增 ${added} 个，移除 ${removed} 个，当前共 ${S.whitelist.length} 个。`);
   }
 
   // ============ UI ============
@@ -487,6 +556,8 @@
       error: all.filter((r) => r.status === 'error').length,
       done: all.filter((r) => r.unfollowed).length,
       pending: all.filter(isTarget).length,
+      mutual: all.filter((r) => r.mutual && !r.unfollowed).length,
+      white: all.filter(isWhite).length,
     };
   }
 
@@ -498,7 +569,8 @@
       `<span style="color:${st.pending ? '#f56c6c' : '#67c23a'}">待办 <b>${st.pending}</b></span> ｜ ` +
       `<span style="color:#e6a23c">一年未更 <b>${st.stale}</b></span> ｜ ` +
       `<span style="color:#f56c6c">已注销 <b>${st.dead}</b></span> ｜ ` +
-      `无视频 ${st.novideo} ｜ 异常 ${st.error} ｜ 已取关 <b>${st.done}</b>` +
+      `无视频 ${st.novideo} ｜ 异常 ${st.error} ｜ 已取关 <b>${st.done}</b> ｜ ` +
+      `<span style="color:#909399">互关排除 ${st.mutual} ｜ 白名单 ${st.white}</span>` +
       (S.scanning ? (S.paused ? ' ｜ <span style="color:#e6a23c">已暂停</span>' : ' ｜ <span style="color:#67c23a">扫描中…</span>') : '');
 
     const list = Object.values(S.results).filter(isTarget)
@@ -539,6 +611,7 @@
         <button data-act="export">导出进度</button>
         <button data-act="import">导入进度</button>
         <button data-act="retry" style="color:#e6a23c">重试异常项</button>
+        <button data-act="white" style="color:#606266">白名单</button>
         <button data-act="rescan" style="color:#409eff">重新扫描</button>
         <button data-act="reconcile" style="color:#409eff">对账</button>
         <button data-act="unfollow" style="color:#c00">按清单取关</button>
@@ -562,7 +635,9 @@
       const act = ev.target.getAttribute('data-act');
       if (ev.target.hasAttribute('data-x')) { panel.remove(); panel = null; return; }
       if (!act) return;
-      if (act === 'scan') {
+      if (act === 'white') {
+        manageWhitelist();
+      } else if (act === 'scan') {
         if (S.scanning) { S.paused = false; setNote('继续扫描…'); render(); return; }
         if (!S.mid) {
           const nav = await fetchJson(BILI + '/x/web-interface/nav');
