@@ -2,7 +2,7 @@
 // @name         B站关注清理助手
 // @name:en      Bilibili Follow Cleanup
 // @namespace    https://github.com/HAZBJC/bili-follow-cleanup
-// @version      1.3.1
+// @version      1.3.2
 // @description  扫描关注列表，标出「一年未更新」和「已注销」的 UP 主，导出 CSV；确认后再分批取关。默认只读。
 // @description:en  Scan your Bilibili following list, flag creators with no uploads for a year and deactivated accounts, export a CSV, then unfollow in controlled batches.
 // @author       HAZBJC
@@ -486,6 +486,7 @@
       novideo: all.filter((r) => r.status === 'novideo').length,
       error: all.filter((r) => r.status === 'error').length,
       done: all.filter((r) => r.unfollowed).length,
+      pending: all.filter(isTarget).length,
     };
   }
 
@@ -494,6 +495,7 @@
     const st = stats();
     statEl.innerHTML =
       `关注总数 <b>${S.total || '?'}</b> ｜ 已查 <b>${st.checked}</b> ｜ ` +
+      `<span style="color:${st.pending ? '#f56c6c' : '#67c23a'}">待办 <b>${st.pending}</b></span> ｜ ` +
       `<span style="color:#e6a23c">一年未更 <b>${st.stale}</b></span> ｜ ` +
       `<span style="color:#f56c6c">已注销 <b>${st.dead}</b></span> ｜ ` +
       `无视频 ${st.novideo} ｜ 异常 ${st.error} ｜ 已取关 <b>${st.done}</b>` +
