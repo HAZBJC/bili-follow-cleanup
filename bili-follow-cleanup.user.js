@@ -2,7 +2,7 @@
 // @name         B站关注清理助手
 // @name:en      Bilibili Follow Cleanup
 // @namespace    https://github.com/HAZBJC/bili-follow-cleanup
-// @version      1.3.0
+// @version      1.3.1
 // @description  扫描关注列表，标出「一年未更新」和「已注销」的 UP 主，导出 CSV；确认后再分批取关。默认只读。
 // @description:en  Scan your Bilibili following list, flag creators with no uploads for a year and deactivated accounts, export a CSV, then unfollow in controlled batches.
 // @author       HAZBJC
@@ -384,12 +384,16 @@
       }
       if (S.stopped) { setNote('对账已停止，未做任何标记。'); return; }
 
-      let marked = 0;
+      // 双向同步：不在列表里的标为已取关；仍在列表里却带着标记的撤销（取关接口偶发假成功）
+      let marked = 0, unmarked = 0;
       Object.values(S.results).forEach((r) => {
-        if (!mids.has(String(r.mid)) && !r.unfollowed) { r.unfollowed = true; marked++; }
+        const inList = mids.has(String(r.mid));
+        if (!inList && !r.unfollowed) { r.unfollowed = true; marked++; }
+        else if (inList && r.unfollowed) { r.unfollowed = false; unmarked++; }
       });
       save();
-      setNote(`✅ 对账完成：当前关注 ${mids.size} 个，${marked} 条旧记录已标记为「已取关」。`);
+      setNote(`✅ 对账完成：当前关注 ${mids.size} 个，${marked} 条标为已取关` +
+        (unmarked ? `，${unmarked} 条撤销了误标（实际仍在关注）` : '') + '。');
     } catch (e) {
       setNote('❌ 对账失败：' + (e.message || e));
     } finally {
