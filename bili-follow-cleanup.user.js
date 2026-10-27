@@ -2,7 +2,7 @@
 // @name         B站关注清理助手
 // @name:en      Bilibili Follow Cleanup
 // @namespace    https://github.com/HAZBJC/bili-follow-cleanup
-// @version      1.2.0
+// @version      1.2.1
 // @description  扫描关注列表，标出「一年未更新」和「已注销」的 UP 主，导出 CSV；确认后再分批取关。默认只读。
 // @description:en  Scan your Bilibili following list, flag creators with no uploads for a year and deactivated accounts, export a CSV, then unfollow in controlled batches.
 // @author       HAZBJC
@@ -370,7 +370,7 @@
         fmtDate(r.lastTs),
         daysAgo(r.lastTs) === null ? '' : daysAgo(r.lastTs),
         r.status === 'deleted' ? '已注销' : r.status === 'novideo' ? '无视频投稿' : r.status === 'error' ? '查询异常:' + (r.note || '') : '正常',
-        isDead(r) ? '待取关(注销)' : isStale(r) ? '待取关(一年未更)' : '保留',
+        r.unfollowed ? '已取关' : isDead(r) ? '待取关(注销)' : isStale(r) ? '待取关(一年未更)' : '保留',
       ]);
     });
     const csv = '\ufeff' + rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\r\n');
