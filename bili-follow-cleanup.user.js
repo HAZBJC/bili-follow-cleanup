@@ -2,7 +2,7 @@
 // @name         B站关注清理助手
 // @name:en      Bilibili Follow Cleanup
 // @namespace    https://github.com/HAZBJC/bili-follow-cleanup
-// @version      1.1.0
+// @version      1.2.0
 // @description  扫描关注列表，标出「一年未更新」和「已注销」的 UP 主，导出 CSV；确认后再分批取关。默认只读。
 // @description:en  Scan your Bilibili following list, flag creators with no uploads for a year and deactivated accounts, export a CSV, then unfollow in controlled batches.
 // @author       HAZBJC
@@ -172,13 +172,14 @@
     stopped: false,
     unfollow: { date: '', count: 0 },
     note: '',
+    force: false,   // 重新扫描：忽略已有结果，全部重查
   };
 
   function save() {
     try {
       localStorage.setItem(KEY, JSON.stringify({
         mid: S.mid, total: S.total, totalPages: S.totalPages, cursorPage: S.cursorPage,
-        queue: S.queue, results: S.results, unfollow: S.unfollow,
+        queue: S.queue, results: S.results, unfollow: S.unfollow, force: S.force,
       }));
     } catch (e) { /* 容量问题忽略 */ }
   }
@@ -262,7 +263,7 @@
           const list = await fetchFollowPage(S.cursorPage);
           if (!list.length) break;
           S.totalPages = Math.ceil(S.total / CFG.pageSize);
-          S.queue = list.filter((u) => !S.results[u.mid]).map((u) => ({ mid: u.mid, uname: u.uname }));
+          S.queue = list.filter((u) => S.force || !S.results[u.mid]).map((u) => ({ mid: u.mid, uname: u.uname }));
           S.cursorPage++;
           save();
           setNote(`已取到第 ${S.cursorPage - 1}/${S.totalPages} 页`);
@@ -270,7 +271,7 @@
         }
 
         const item = S.queue.shift();
-        if (!item || S.results[item.mid]) continue;
+        if (!item || (!S.force && S.results[item.mid])) continue;
 
         let rec;
         try {
@@ -295,6 +296,11 @@
       setNote('❌ 已停止：' + (e.message || e));
     } finally {
       S.scanning = false;
+      // 正常跑完（非手动停止、非异常）才给完成提示
+      if (!S.stopped && S.totalPages && S.cursorPage > S.totalPages) {
+        S.force = false;
+        setNote(`✅ 扫描完成：共 ${Object.keys(S.results).length} 条记录。`);
+      }
       save();
       render();
     }
@@ -488,6 +494,7 @@
         <button data-act="export">导出进度</button>
         <button data-act="import">导入进度</button>
         <button data-act="retry" style="color:#e6a23c">重试异常项</button>
+        <button data-act="rescan" style="color:#409eff">重新扫描</button>
         <button data-act="unfollow" style="color:#c00">按清单取关</button>
         <button data-act="reset" style="color:#888">清空缓存</button>
       </div>
@@ -517,6 +524,25 @@
           S.mid = nav.data.mid;
         }
         if (!S.totalPages && !S.total) { /* 首次 */ }
+        if (!S.queue.length && S.totalPages && S.cursorPage > S.totalPages) {
+          setNote('全部已扫描完成。如需重新检查，点「重新扫描」。');
+          render();
+          return;
+        }
+        scanLoop();
+      } else if (act === 'rescan') {
+        if (S.scanning) { alert('正在扫描，请先点「停止」。'); return; }
+        const ok = confirm(
+          `重新扫描会重新查询全部关注（约 ${S.total || '?'} 个，需要数小时），覆盖现有判定结果。\n` +
+          `「已取关」的标记会保留。\n\n继续？`
+        );
+        if (!ok) return;
+        S.force = true;
+        S.cursorPage = 1;
+        S.totalPages = 0;
+        S.total = 0;
+        S.queue = [];
+        save();
         scanLoop();
       } else if (act === 'pause') {
         S.paused = true; setNote('已暂停，点「开始/继续扫描」恢复。'); render();
