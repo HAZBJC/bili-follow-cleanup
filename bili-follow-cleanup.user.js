@@ -2,7 +2,7 @@
 // @name         B站关注清理助手
 // @name:en      Bilibili Follow Cleanup
 // @namespace    https://github.com/HAZBJC/bili-follow-cleanup
-// @version      1.2.1
+// @version      1.3.0
 // @description  扫描关注列表，标出「一年未更新」和「已注销」的 UP 主，导出 CSV；确认后再分批取关。默认只读。
 // @description:en  Scan your Bilibili following list, flag creators with no uploads for a year and deactivated accounts, export a CSV, then unfollow in controlled batches.
 // @author       HAZBJC
@@ -360,6 +360,45 @@
     alert(`本轮结束：成功 ${done}，失败 ${fail}。`);
   }
 
+  // ============ 对账 ============
+  // 重新扫描只做增量更新，不会清理「已不在关注列表」的旧记录，导致取关过的账号
+  // 仍显示为待取关。对账只拉关注列表（约 100 次请求），把不在列表里的记录标为已取关。
+  async function reconcileLoop() {
+    S.scanning = true; S.stopped = false; S.paused = false;
+    render();
+    try {
+      await loadWbi(true);
+      S.total = 0;          // 强制重新读取真实关注数
+      const mids = new Set();
+      let pn = 1;
+      while (!S.stopped) {
+        const list = await fetchFollowPage(pn);
+        if (!list.length) break;
+        list.forEach((u) => mids.add(String(u.mid)));
+        setNote(`对账中：已拉取 ${mids.size}/${S.total || '?'} 个关注`);
+        render();
+        const maxPage = Math.ceil((S.total || 0) / CFG.pageSize);
+        if (maxPage && pn >= maxPage) break;
+        pn++;
+        await sleep(rnd(CFG.scanDelayMin, CFG.scanDelayMax));
+      }
+      if (S.stopped) { setNote('对账已停止，未做任何标记。'); return; }
+
+      let marked = 0;
+      Object.values(S.results).forEach((r) => {
+        if (!mids.has(String(r.mid)) && !r.unfollowed) { r.unfollowed = true; marked++; }
+      });
+      save();
+      setNote(`✅ 对账完成：当前关注 ${mids.size} 个，${marked} 条旧记录已标记为「已取关」。`);
+    } catch (e) {
+      setNote('❌ 对账失败：' + (e.message || e));
+    } finally {
+      S.scanning = false;
+      save();
+      render();
+    }
+  }
+
   // ============ 导出 ============
   function exportCsv() {
     const rows = [['UP主', 'UID', '空间链接', '最后投稿', '距今天数', '状态', '判定']];
@@ -495,6 +534,7 @@
         <button data-act="import">导入进度</button>
         <button data-act="retry" style="color:#e6a23c">重试异常项</button>
         <button data-act="rescan" style="color:#409eff">重新扫描</button>
+        <button data-act="reconcile" style="color:#409eff">对账</button>
         <button data-act="unfollow" style="color:#c00">按清单取关</button>
         <button data-act="reset" style="color:#888">清空缓存</button>
       </div>
@@ -544,6 +584,14 @@
         S.queue = [];
         save();
         scanLoop();
+      } else if (act === 'reconcile') {
+        if (S.scanning) { alert('正在扫描，请先点「停止」。'); return; }
+        const ok = confirm(
+          '对账会拉取你当前的关注列表（约 4 分钟），把已经不在关注列表里的记录标记为「已取关」。\n' +
+          '不会查询 UP 主详情，也不会删除任何记录。\n\n继续？'
+        );
+        if (!ok) return;
+        reconcileLoop();
       } else if (act === 'pause') {
         S.paused = true; setNote('已暂停，点「开始/继续扫描」恢复。'); render();
       } else if (act === 'stop') {
